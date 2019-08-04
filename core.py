@@ -92,8 +92,8 @@ def get_filename(row: pd.Series):
     parts.append(row.created.strftime(date_format_file))
     parts.append(row.purpose)
     if pd.notnull(row.local_amt):
-        parts.append('{:2f}{}'.format(row.local_amt, row.local_currency))
-    parts.append('{:2f}{}'.format(row.amount, row.currency))
+        parts.append('{:.2f}{}'.format(row.local_amt, row.local_currency))
+    parts.append('{:.2f}{}'.format(row.amount, row.currency))
     return '_'.join(parts)
 
 
