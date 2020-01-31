@@ -8,12 +8,13 @@ import re
 # Get these from the Monzo API login page
 user_id = "user_xxxxxxxxxxxxxxxxxxxxx"
 acc_id = "acc_xxxxxxxxxxxxxxxxxxxxx"
-token = "xxxxxxxxxxxxxxxxxxxxxxxxx"
+token = "xxxxxxxxxxxxxxxxxxxxx"
 
 # Where you want the receipts to end up
 base_folder = os.path.join(r"my_path")
 # The format of the excel filename (only use the placeholders provided, or code to add others in)
 excel_name_template = "{start}_{end}_summary{{tag}}.xlsx"
+csv_name_template = "{start}_{end}_summary{{tag}}.csv"
 # Format of dates in filenames
 date_format_file = '%Y%m%d'
 # Which category do you reserve for expenses?
@@ -22,13 +23,17 @@ expense_category = "expenses"
 download_receipts = True
 
 # The start date. Inclusive
-start_date = datetime.date(year=2019, month=7, day=1)
+start_date = datetime.date(year=2020, month=1, day=25)
 # End date, inclusive.
-end_date = datetime.date(year=2019, month=8, day=4)
+end_date = datetime.date(year=2020, month=1, day=31)
 
 # The excel filename gets formatted here.
 excel_name = excel_name_template.format(start=start_date.strftime(date_format_file),
                                         end=end_date.strftime(date_format_file))
+csv_name = csv_name_template.format(start=start_date.strftime(date_format_file),
+                                    end=end_date.strftime(date_format_file))
+
+food_merchants = ['groceries', 'eating_out']
 
 
 def guess_reason(row):
@@ -45,7 +50,9 @@ def guess_reason(row):
         else:
             return "Bus"
     elif row.merchant_cat == "transport":
-        if row.created.hour < 12 and row.local_currency == "GBP":
+        if row.merchant.lower() == 'luas':
+            return "Luas top-up"
+        elif row.created.hour < 12 and row.local_currency == "GBP":
             return "Taxi to airport"
         elif row.created.hour < 12 and row.local_currency == "EUR":
             return "Taxi to work"
@@ -55,14 +62,23 @@ def guess_reason(row):
             return "Taxi home"
         else:
             return "Taxi"
-    elif 7 <= row.created.hour < 11:
+    elif 7 <= row.created.hour < 11 and row.merchant_cat in food_merchants:
         return "Breakfast"
-    elif 11 <= row.created.hour < 15:
+    elif 11 <= row.created.hour < 15 and row.merchant_cat in food_merchants:
         return "Lunch"
-    elif row.created.hour >= 15:
+    elif row.created.hour >= 15 and row.merchant_cat in food_merchants:
         return "Dinner"
     else:
         return ""
+
+
+def clean_merchant(row: pd.Series):
+    if row.merchant_cat == 'transport' and re.match('[a-z0-9]{6}-2', row.merchant):
+        return 'FreeNow'
+    elif re.match(r'Hotelscom\d+', row.merchant):
+        return 'Hotels.com'
+    else:
+        return row.merchant
 
 
 def get_full_desc(row):
@@ -70,7 +86,7 @@ def get_full_desc(row):
         return "{date} {purpose}, {merchant}, €{local_amt}, £{amt}, €1=£{rate:.4f}".format(
             date=row.created.date().strftime('%d/%m'),
             purpose=row.purpose,
-            merchant=row.merchant,
+            merchant=row.clean_merchant,
             local_amt=row.local_amt,
             amt=row.amount,
             rate=row.rate
@@ -79,7 +95,7 @@ def get_full_desc(row):
         return "{date} {purpose}, {merchant}, £{amt}".format(
             date=row.created.date().strftime('%d/%m'),
             purpose=row.purpose,
-            merchant=row.merchant,
+            merchant=row.clean_merchant,
             amt=row.amount
         )
 
@@ -148,7 +164,8 @@ if __name__ == "__main__":
     ).assign(
         rate=lambda x: (x.amount/x.local_amt),
         purpose=lambda x: x.apply(guess_reason, axis=1),
-        create_dt=lambda x: x.created.dt.date
+        create_dt=lambda x: x.created.dt.date,
+        clean_merchant=lambda x: x.apply(clean_merchant, axis=1)
     ).assign(
         full_description=lambda x: x.apply(get_full_desc, axis=1),
         filename=lambda x: x.apply(get_filename, axis=1)
@@ -162,11 +179,12 @@ if __name__ == "__main__":
         receipt_cols = []
     print('Writing to Excel')
     for tag in dldf.tag.unique():
-        dldf.query('tag == @tag')\
+        towrite = dldf.query('tag == @tag')\
             [['create_dt', 'full_description', 'local_amt', 'local_currency', 'amount', 'currency', 'rate'] +
                 receipt_cols]\
-            .assign(rate=lambda x: x.rate.round(4))\
-            .to_excel(os.path.join(base_folder, excel_name.format(tag="_" + tag if tag else '')), index=False)
+            .assign(rate=lambda x: x.rate.round(4))
+        towrite.to_excel(os.path.join(base_folder, excel_name.format(tag="_" + tag if tag else '')), index=False)
+        towrite.to_csv(os.path.join(base_folder, csv_name.format(tag="_" + tag if tag else '')), index=False)
     print('Done.')
     print("Generated {} expenses, worth {}.".format(len(dldf), dldf.amount.sum()))
 
